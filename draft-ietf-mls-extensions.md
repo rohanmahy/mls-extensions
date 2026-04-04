@@ -188,9 +188,8 @@ themselves:
   be associated with a Commit.
 
 - An AppDataUpdate proposal type that enables efficient updates to
-  an `app_data_dictionary` GroupContext extension, and an OpaqueDataUpdate
-  proposal type that enables safe updates to an `opaque_data_dictionary`
-  GroupContext extension.
+  both the `app_data_dictionary` and `opaque_data_dictionary` GroupContext
+  extensions.
 
 As with the above, information carried in these proposals and extensions is
 marked as belonging to a specific application component, so that components can
@@ -427,39 +426,55 @@ section is used to update the `app_data_dictionary` extension.
 The `opaque_data_dictionary` GroupContext extension provides a generic container
 for opaque data. Unlike the `app_data_dictionary`, the components inside an
 `opaque_data_dictionary` do not need to be understood by each member of the
-group, however all members still MUST support `opaque_data_dictionary` extension
-if it is included.
+group, however all members still MUST support the `opaque_data_dictionary`
+extension if it is included in the GroupContext. The same component MUST only
+appear in either the `app_data_dictionary` extension, or the
+`opaque_data_dictionary` extension, or neither of them. The same component MUST
+NOT appear in both extensions.
 
 Like the `app_data_dictionary` extension in the GroupContext, the
 `opaque_data_dictionary` extension is a serialized AppDataDictionary object. Its
-entries in the `component_data` MUST  be sorted by `component_id` and there
+entries in the `component_data` MUST be sorted by `component_id` and there
 MUST be at most one entry for each `component_id`. The creator of the group can
 set an `opaque_data_dictionary` extension unilaterally. Thereafter, the
-OpaqueDataUpdate proposal described in the next section is used to update the
-`opaque_data_dictionary` extension.
+AppDataUpdate proposal described in the next section is used to update the
+`opaque_data_dictionary` extension. The same `component_id` MUST NOT appear in
+both the `app_data_dictionary` extension and the `opaque_data_dictionary`
+extension.
 
 ## Updating Application Data in the GroupContext {#appdataupdate}
 
 Updating the `app_data_dictionary` or `opaque_data_dictionary` extensions with a
-GroupContextExtensions proposal is cumbersome. The application data needs to be
-transmitted in its entirety, along with any other extensions, whether or not
-they are being changed. And a GroupContextExtensions proposal always requires an
-UpdatePath, which updating application state never should require.
+GroupContextExtensions proposal would be cumbersome. The application data needs
+to be transmitted along with any other extensions, whether or not they are being
+changed. And a GroupContextExtensions proposal always requires an UpdatePath,
+which updating application state never should require. The AppDataUpdate
+proposal allows the `app_data_dictionary` extension and the
+`opaque_data_dictionary` extension to be updated without these costs.
 
-The AppDataUpdate proposal allows the `app_data_dictionary` extension to be
-updated without these costs. Instead of sending the whole value of the
-extension, it sends only an update, which is interpreted by the application to
-provide the new content for one components of the `app_data_dictionary`
-extension. Each member of the group needs to understand the update format of
-each component in the `app_data_dictionary` that appears in the GroupContext. No
-other extensions are sent or updated in the same proposal, and no UpdatePath is
-required.
+In the case of the `app_data_dictionary` extension, instead of sending the whole
+value of the extension, the specification for each component defines either an
+opaque update or only a component-specific update. This update is interpreted
+by the application, to provide the new content for that component of the
+`app_data_dictionary` extension. Each member of the group needs to understand
+the update format of each component in the `app_data_dictionary` that appears in
+the GroupContext.
+
+In the case of the `opaque_data_dictionary`, an opaque update completely
+replaces the value of a single component in the `opaque_data_dictionary` without
+any application interpretation. This allows members that do not understand a
+component of the OpaqueDataUpdate to process updates correctly, and still
+construct the correct GroupContext.
+
+An AppDataUpdate proposal requires no UpdatePath.
 
 ~~~
 enum {
     invalid(0),
     update(1),
     remove(2),
+    opaque_update(2),
+    opaque_remove(3),
     (255)
 } AppDataUpdateOperation;
 
@@ -470,43 +485,37 @@ struct {
     select (AppDataUpdate.op) {
         case update: opaque update<V>;
         case remove: struct{};
+        case opaque_update: opaque new_data<V>;
+        case opaque_remove: struct{};
     };
 } AppDataUpdate;
 ~~~
 
-The OpaqueDataUpdate proposal allows the `opaque_data_dictionary` extension to
-be updated in a similar manner, except that the update of any component in the
-`opaque_data_dictionary` extension is always a complete replacement of the
-`data` of that component with the `new_data` field from the proposal. This
-allows members that do not understand a component of the OpaqueDataUpdate to
-process updates correctly, and still construct the correct GroupContext.
+An AppDataUpdate proposal is invalid if it specifies the removal of state for a
+`component_id` in either extension that has no state present, or if its
+`component_id` references a component in the `app_data_dictionary` that is not
+known to the application. A proposal list is invalid if it includes multiple
+AppDataUpdate proposals with any of the following operations for the same `component_id`:
 
-~~~
-struct {
-    ComponentID component_id;
-    AppDataUpdateOperation op;
+- multiple `remove` operations,
+- multiple `opaque_remove` operations,
+- both `remove` and `opaque_remove` operations,
+- multiple `opaque_update` operations,
+- both `update` and `remove` operations, or
+- both `opaque_update` and `opaque_remove` operations.
 
-    select (OpaqueDataUpdate.op) {
-        case update: opaque new_data<V>;
-        case remove: struct{};
-    };
-} OpaqueDataUpdate;
-~~~
+An AppDataUpdate proposal is likewise invalid if it contains an `update` of a
+`component_id` that would remain in the `opaque_data_dictionary`, or an
+`opaque_update` of a `component_id` that would remain in the
+`app_data_dictionary`. It is valid however to generate an AppDataUpdate proposal
+to `opaque_remove` a `component_id` followed by an `update` of the same
+`component_id`, or to `remove` a `component_id` followed by an `opaque_update`
+of the same `component_id`.
 
-An AppDataUpdate proposal is invalid if its `component_id` references a
-component that is not known to the application, or if it specifies the removal
-of state for a `component_id` that has no state present. A proposal list is
-invalid if it includes multiple AppDataUpdate proposals that `remove` state for
-the same `component_id`, or proposals that both `update` and `remove` state for
-the same `component_id`. In other words, for a given `component_id`, a proposal
-list is valid only if it contains (a) a single `remove` operation or (b) one or
-more `update` operation.
-
-An OpaqueDataUpdate proposal is invalid if it specifies the removal
-of state for a `component_id` that has no state present. A proposal list is
-invalid if it includes multiple OpaqueDataUpdate proposals that `remove` state
-for the same `component_id`, or proposals that both `update` and `remove` state
-for the same `component_id`.
+In other words, for a given `component_id`, a proposal list is valid only if it
+contains: (a) a single `remove` or `opaque_remove` operation, (b) one
+`opaque_update` operation, (c) one `remove` and one `opaque_update`, (d) one
+`opaque_remove` and one `update`, OR (e) one or more `update` operations.
 
 <!--
 The processing order of default proposals and the proposal types defined in this
@@ -522,31 +531,28 @@ document are as follows:
 - Zero or one ReInit proposal,
 - Any AppEphemeral proposals,
 - Any AppDataUpdate proposals,
-- Any OpaqueDataUpdate proposals
 -->
 
 AppDataUpdate proposals are processed after any default proposals (i.e., those
-defined in {{RFC9420}}), and any AppEphemeral proposals (defined in
-{{app-ephemeral}}). OpaqueDataUpdate proposals are process after any
-AppDataUpdate proposals.
+defined in {{RFC9420}}), and after any AppEphemeral proposals (defined in
+{{app-ephemeral}}).
 
-When an MLS group contains either the AppDataUpdate proposal type or the
-OpaqueDataUpdate proposal type in the `proposal_types` list in the group's
-`required_capabilities` extension, a GroupContextExtensions proposal MUST NOT
-add, remove, or modify either the `app_data_dictionary` GroupContext extension
-or the `opaque_data_dictionary` GroupContext extension. In other words, when
-every member of the group supports either the AppDataUpdate proposal or the
-OpaqueDataUpdate proposal, a GroupContextExtensions proposal could be sent to
+When an MLS group contains either the AppDataUpdate proposal type in the
+`proposal_types` list in the group's `required_capabilities` extension, a
+GroupContextExtensions proposal MUST NOT add, remove, or modify either the
+`app_data_dictionary` GroupContext extension or the `opaque_data_dictionary`
+GroupContext extension. In other words, when every member of the group supports
+the AppDataUpdate proposal, a GroupContextExtensions proposal could be sent to
 update some other extension(s), but the `app_data_dictionary` GroupContext
-extension and the `opaque_data_dictionary`, if either or both exist, is left as
-it was.
+extension and the `opaque_data_dictionary`, if either or both exist, MUST be
+left as they were.
 
 A commit can contain a GroupContextExtensions proposal which modifies
 GroupContext extensions other than `app_data_dictionary` or
 `opaque_data_dictionary`, and can be followed by zero or more AppDataUpdate
-proposals and zero or more OpaqueDataUpdate proposal. This allows modifications
-to both the `app_data_dictionary` extension (via AppDataUpdate) and other
-extensions (via GroupContextExtensions) in the same Commit.
+proposals. This allows modifications to both the `app_data_dictionary` and
+`opaque_data_dictionary` extensions (via AppDataUpdate) and other extensions
+(via GroupContextExtensions) in the same Commit.
 
 A client applies AppDataUpdate proposals by component ID. For each
 `component_id` field that appears in an AppDataUpdate proposal in the Commit,
@@ -554,13 +560,48 @@ the client assembles a list of AppDataUpdate proposals with that `component_id`,
 in the order in which they appear in the Commit, and processes them in the
 following way:
 
-* If the list comprises a single proposal with the `op` field set to `remove`:
+* If the list comprises a single proposal with the `op` field set to `remove`,
+  and zero or one proposal with the `op` field set to `opaque_update`:
 
-    * If there is an entry in the `component_states` vector in the
-      `application_state` extension with the specified `component_id`, remove
+    * If there is an entry in the `component_data` vector in the
+      `app_data_dictionary` extension with the specified `component_id`, remove
       it.
 
     * Otherwise, the proposal is invalid.
+
+    * If there is also a proposal with the `op` field set to `opaque_update`,
+      continue processing the next step as if there was only a single proposal
+      with the `op` field set to `opaque_update`.
+
+* If the list comprises exactly one proposal, with the `op` field set to
+  `opaque_update`:
+
+    * If no `opaque_data_dictionary` extension is present in the GroupContext,
+      add one to the end of the `extensions` list in the GroupContext.
+
+    * If there is an entry in the `component_data` vector in the
+      `opaque_app_data_dictionary` extension with the specified `component_id`,
+      then set its `data` field to the specified `new_data`.
+
+    * Otherwise, insert a new entry in the `component_data` vector with the
+      specified `component_id` and the `data` field set to the `new_data` value.
+      The new entry is inserted at the proper point to keep the
+      `component_states` vector sorted by `component_id`.
+
+* If the list comprises a single proposal with the `op` field set to
+  `opaque_remove`, and zero or one proposal with the `op` field set to `update`:
+
+    * If there is an entry in the `component_data` vector in the
+      `opaque_data_dictionary` extension with the specified `component_id`,
+      tentatively remove it.
+
+    * Otherwise, the proposal is invalid.
+
+    * If there is also a single proposal with the `op` field set to `update`,
+      check that the proposal is valid according to the steps immediately below
+      for processing a list of proposals all with the `op` field set to
+      `update`. If that proposal is invalid, the `opaque_remove` proposal is
+      also invalid.
 
 * If the list comprises one or more proposals, all with `op` field set to
   `update`:
@@ -583,7 +624,7 @@ following way:
       `app_data_dictionary` extension with the specified `component_id`, then
       set its `data` field to the specified `new_data`.
 
-    * Otherwise, insert a new entry in the `component_states` vector with the
+    * Otherwise, insert a new entry in the `component_data` vector with the
       specified `component_id` and the `data` field set to the `new_data` value.
       The new entry is inserted at the proper point to keep the
       `component_states` vector sorted by `component_id`.
@@ -594,15 +635,8 @@ following way:
 > the `opaque_data_dictionary` GroupContext extensions may have a performance
 > impact.
 
-Likewise, a client applies OpaqueDataUpdate proposals in the same way as an
-AppDataUpdate proposal, except that an OpaqueDataUpdate proposal modifies the
-`opaque_data_dictionary` instead of the `app_data_dictionary`, and when
-processing an `op` field set to `update`, it skips the first three bullet items
-regarding application logic.
-
-Neither AppDataUpdate proposals nor OpaqueDataUpdate proposal require an
-UpdatePath. Both AppDataUpdate and OpaqueDataUpdate proposals can be sent by an
-external sender, and both proposal types can be included in an external commit.
+AppDataUpdate proposals do not require an UpdatePath. AppDataUpdate proposals
+can be sent by an external sender, and can be included in an external commit.
 Applications can make more restrictive validity rules for the update of their
 components in an AppDataUpdate proposal, such that some components would not be
 valid at the application when sent in an external commit or via an external
