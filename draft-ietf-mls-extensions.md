@@ -1335,18 +1335,6 @@ type is permitted in External Commits.
 * External: N
 * Path Required: Y
 
-### OpaqueDataUpdate Proposal
-
-The `opaque_data_update` MLS Proposal Type is used to efficiently update
-application component data stored in the `opaque_data_dictionary` GroupContext
-extension.
-
-* Value: 0x000b (suggested)
-* Name: opaque_data_update
-* Recommended: Y
-* External: Y
-* Path Required: N
-
 ## MLS Credential Types {#iana-creds}
 
 ### Multi Credential
